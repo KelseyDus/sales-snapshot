@@ -40,7 +40,7 @@ function sameSite(a, b) { return a.hostname.replace(/^www\./, '') === b.hostname
 
 function parsePage(html, url) {
   const base = new URL(url);
-  const out = { url, title: '', description: '', h1s: [], viewport: false, videos: [], signup: false, contactForm: false, phone: false, mailto: false, cta: [], social: [], schema: [], analytics: [], links: [] };
+  const out = { url, title: '', description: '', h1s: [], h2s: [], text: '', viewport: false, videos: [], signup: false, contactForm: false, phone: false, mailto: false, cta: [], social: [], schema: [], analytics: [], links: [] };
   const t = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
   if (t) out.title = strip(t[1]);
   for (const m of html.match(/<meta\b[^>]*>/gi) || []) {
@@ -49,6 +49,9 @@ function parsePage(html, url) {
     if (n === 'viewport') out.viewport = true;
   }
   for (const m of html.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi)) { const x = strip(m[1]); if (x) out.h1s.push(x); }
+  for (const m of html.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)) { const x = strip(m[1]); if (x && out.h2s.length < 12) out.h2s.push(x); }
+  const body = /<body\b[^>]*>([\s\S]*)/i.exec(html);
+  out.text = strip(String(body ? body[1] : html).replace(/<(noscript|svg|nav|footer)\b[\s\S]*?<\/\1>/gi, ' ')).slice(0, 4000);
   for (const m of html.match(/<iframe\b[^>]*>/gi) || []) {
     const s = attr(m, 'src') || attr(m, 'data-src');
     if (/youtube(?:-nocookie)?\.com\/embed|player\.vimeo\.com|wistia\.(?:com|net)|loom\.com\/embed/i.test(s)) out.videos.push(clip(s, 80));

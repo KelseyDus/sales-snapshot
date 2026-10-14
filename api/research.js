@@ -4,6 +4,11 @@ const auth = require('./_lib/auth');
 const rl = require('./_lib/ratelimit');
 const { parseTarget, fetchPage } = require('./_lib/fetcher');
 const { parsePage, pickLinks, analyze } = require('./_lib/analyze');
+const ai = require('./_lib/ai');
+const pricing = require('./_lib/pricing');
+
+// Swappable in tests.
+const deps = { fetchPage, draftAudit: ai.draftAudit };
 
 module.exports = async (req, res) => {
   if (!requirePost(req, res)) return;
@@ -12,15 +17,29 @@ module.exports = async (req, res) => {
   const body = await readJson(req);
   let target;
   try { target = parseTarget(body && body.website); } catch (e) { return json(res, 400, { error: e.expose ? e.message : 'Invalid address.' }); }
+  const company = typeof (body && body.company) === 'string' ? body.company.trim().slice(0, 120) : '';
   let home;
-  try { home = await fetchPage(target.href); } catch (e) { return json(res, 422, { error: e.expose ? e.message : 'The website could not be reviewed.' }); }
+  try { home = await deps.fetchPage(target.href); } catch (e) { return json(res, 422, { error: e.expose ? e.message : 'The website could not be reviewed.' }); }
   const pages = [parsePage(home.html, home.url)];
   const extra = pickLinks(pages[0], 2);
-  const results = await Promise.allSettled(extra.map(u => fetchPage(u)));
+  const results = await Promise.allSettled(extra.map(u => deps.fetchPage(u)));
   const errors = [];
   results.forEach((r, i) => {
     if (r.status === 'fulfilled') pages.push(parsePage(r.value.html, r.value.url));
     else errors.push({ url: extra[i], message: r.reason && r.reason.expose ? r.reason.message : 'Could not be retrieved.' });
   });
-  json(res, 200, { reviewedAt: new Date().toISOString(), ...analyze(pages), errors });
+  const analysis = analyze(pages);
+  const out = { reviewedAt: new Date().toISOString(), ...analysis, errors, ai: { used: false } };
+  if (ai.enabled()) {
+    try {
+      const draft = await deps.draftAudit({ company, pages, ruleFindings: analysis.findings, areas: pricing.areas });
+      const merged = ai.mergeAudit(analysis.findings, draft, home.url);
+      out.findings = merged.findings; out.priorities = merged.priorities; out.strength = merged.strength; out.outreach = merged.outreach;
+      out.ai = { used: true, model: ai.modelName() };
+    } catch (e) {
+      out.ai = { used: false, error: e && e.safe ? e.message : 'AI drafting was unavailable.' };
+    }
+  }
+  json(res, 200, out);
 };
+module.exports._deps = deps;
